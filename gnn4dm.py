@@ -4,8 +4,17 @@ import torch
 import torch_geometric
 from torch_geometric.utils import from_networkx
 import networkx as nx
+
+#pandas designed for data manipulation and analysis
 import pandas as pd
+
+#numpy building block for many other Python libraries like pandas, scikit-learn, TensorFlow, etc.
+#Operations on NumPy arrays are faster and use less memory compared to Python lists.
+#Extensive functionality for scientific computing.
+#It provides tools to work with large, multi-dimensional arrays and matrices, 
+#along with a collection of high-level mathematical functions to operate on these data structures efficiently.
 import numpy as np
+
 import scipy as sp
 
 from sklearn.preprocessing import StandardScaler
@@ -47,46 +56,67 @@ def loadGraph( filename ):
     return G
 
 def loadInputFeatures( G : nx.Graph, filenames : list = None ):
-    
+    #3 files sent here to list of filenames
+    #file 1 gene expression matrix that they downloaded
+    #file 2 512 PCA features(columns) of each gene that they calculated
+    #file 3 5 centarlity measures of each gene that they calculated
+    #each row represents the gene followed by 54 exression values corresponding to readings from 54 tissues, brain, liver etc
+    #good practice to only use none when you dont have a meaningful value to ur variables avoid overusing
     merged_df = None
+    #this will loop once as there's only one file sent as argument
     for filename in filenames:
         print( f"Read input features from file: {filename}" )
         # Read the current file with the first column as the index
+        #pd refers to import pandas as pd
+        #If the first column of ur dataframe is already unique (e.g., IDs), there's no need to have it as a regular column and a separate default index.
+        #in this case we set index_col=0 meaning dont add an extra column to the right (0,1,2,3,..) with row indices, rather let col 0 (unique gene name in each row) represent our indices
         df = pd.read_csv(filename, sep='\s', index_col=0, header=None, engine='python')
         # If merged_df is None, it's the first iteration, so assign df to merged_df
         if merged_df is None:
             merged_df = df
         else:
-            # Merge the current df with the merged_df on the index
+            # Merge the current df with the merged_df on the index using pandas function pd.merge
+            #the merged dataframe should include all the indices found in both dataframes 'outer' with missing values filled with NaN if replaced witn 'inner' only common indices are merged
             merged_df = pd.merge(merged_df, df, left_index=True, right_index=True, how='outer')
 
     # Step 1: Get the list of nodes from the NetworkX graph "G"
+    #G.nodes(): Returns a NodeView object, which acts like a set or iterator.
+    #list(G.nodes()): Converts the NodeView into a standard Python list.
     nodes_list = list(G.nodes())
 
     # Step 2: Calculate the column-wise mean of the numpy matrix
+    #get the mean valuse for each column to use that to fill in the expression values of genes that arent expressed but part of the graph
     columnwise_mean = np.mean(merged_df.to_numpy(), axis=0)
 
     # Step 3: Align the rows of the DataFrame with the nodes in the NetworkX graph "G"
-    # Create a new DataFrame with the same columns as the original DataFrame and index as nodes_list
+    # Create a new DataFrame with the same columns as the original DataFrame and index as nodes_list 
+    #aligned_df will have the number of colums set to 55 the first has the nodes_list but the rest of the columns NaN
     aligned_df = pd.DataFrame(columns=merged_df.columns, index=nodes_list)
 
     n_missing = 0
 
     # Iterate through the nodes and copy the corresponding row from the original DataFrame
     for node in nodes_list:
+        #The check if node in merged_df.index does not iterate through all the indices one by one, as a naive list would.Instead, pandas Index objects (like merged_df.index) are optimized for fast lookups.
+        #The Index in pandas is implemented using hash-based structures (similar to a Python set or dict).This allows for constant-time complexity (O(1) on average) for lookups like node in merged_df.index, as opposed to linear complexity (O(n)) for lists.
         if node in merged_df.index:
             aligned_df.loc[node] = merged_df.loc[node]
         else:
-            # If the node is not in "m," fill the row with column-wise mean values
+            # If the node is not in "m," meaning gene in the graph nodes with no expression fill the row with column-wise mean values
             aligned_df.loc[node] = columnwise_mean
             n_missing += 1
 
     # Step 4: Convert the aligned DataFrame to a numpy matrix (if needed)
+    #Many libraries like scikit-learn, TensorFlow, and PyTorch expect input as NumPy arrays, not pandas DataFrames.
+    #NumPy operations are often faster due to lower overhead compared to pandas.
+    #The resulting array contains only the data values, not the index or column labels.
     feature_matrix = aligned_df.to_numpy()
 
     print( "Number of ids with missing information: " + str(n_missing) )
     print( "Input feature matrix shape: " + str(feature_matrix.shape) )
-    
+    #StandardScaler().fit_transform(feature_matrix) transforms the data so that each feature (column) has a mean of 0 and a standard deviation of 1.
+    #torch.from_numpy converts standardized NumPy array into a PyTorch tensor.
+    #x is the resulting PyTorch tensor, ready for use in deep learning models.
     x = torch.from_numpy( StandardScaler().fit_transform( feature_matrix ) ).float()
 
     return x
@@ -421,7 +451,10 @@ def runModel( dataset, args ):
     df.to_csv( f"{args.output_dir}/results.csv" )
 
     print( "End of training." )
-
+# since we did not import the file gnn4dm.py but instead the first steo we did to run this main to call gnn4dm
+#using python gnn4dm.py then theif condition is true and so the main runs
+#python gnn4dm.py --graph ./data/StringDB/STRING_v12_edgelist.txt --input_features ./data/GTEx/GTEx_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm_processed.txt ./data/GWASAtlas/gwasATLAS_v20191115_magma_P_non-ukb_True512_processed.txt ./data/StringDB/centrality_measures.txt --pathway_databases ./data/MSigDB/biocarta_ensembl.gmt ./data/MSigDB/kegg_ensembl.gmt ./data/MSigDB/reactome_ensembl.gmt ./data/MSigDB/wikipathways_ensembl.gmt
+#calling python gnn4dm.py calls the main and passes what follows the call as parameters/arguments so --graph is the first paramter
 if __name__ == "__main__":
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="""GNN4DM: a graph neural network-based structured model that automates the discovery of 
@@ -429,7 +462,7 @@ if __name__ == "__main__":
                                                     genomic data to learn the representations of the genes corresponding to functional 
                                                     modules and align these with known biological pathways for enhanced interpretability.""",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    
+    #add_argument basically saves each argument to a variable 
     parser.add_argument('--graph', type=str, required=True, metavar="FILE_PATH", help='Path to the TXT file containing graph edges (two columns containing node identifiers separated by a whitespace).')
     parser.add_argument('--input_features', type=str, required=True, metavar="FILE_PATH", nargs='+', help='Paths to one or more TXT files containing node features (first column: node ids; no headers). All files will be merged to form the initial input features for the nodes in the graph. Missing values will be imputed using feature-wise mean values.')
     parser.add_argument('--pathway_databases', type=str, required=True, metavar="FILE_PATH", nargs='+', help='Paths to one or more GMT files containing pathway annotations (using the same ids as in the graph).')
@@ -448,14 +481,16 @@ if __name__ == "__main__":
     parser.add_argument('--lambda_l2_positives_loss', type=float, default=0.0, help='Lambda for L2 loss on positives.')
     parser.add_argument('--model_type', type=str, default='GCN', choices=['GCN','MLP','GAT','SAGE'], help='Type of model to use.')
 
+    #this line adds all these arguments to args so if you want to call graph it would be args.graph
     args = parser.parse_args()
 
+    #prints the versions of the softwares being used and is defined here
     print_version_info()
 
-    # Load and process the graph data
+    # Load and process the graph data defined here 
     G = loadGraph(args.graph)
 
-    # Load and process the input features
+    # Load and process the input features defined here
     input_features = loadInputFeatures( G, args.input_features )
 
     # Load and process the pathway databases
