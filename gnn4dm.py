@@ -123,30 +123,45 @@ def loadInputFeatures( G : nx.Graph, filenames : list = None ):
 
 def import_gmt_file( G : nx.Graph, gmt_file_path : str, minSize = 10, maxSize = 500 ):
     """
-    Imports a GMT file and returns a dictionary where keys are gene set names
+    Imports a GMT file (in our case we can open these files using text editor as it contains plain text)
+    and returns a dictionary where keys are gene set names
     and values are lists of genes in that set.
 
     :param gmt_file_path: Path to the GMT file.
     :return: A dictionary with gene set names as keys and lists of genes as values.
     """
     gene_sets = {}
+    #converts nodes into a set to utilize set operations as intersection, union and so on
     setOfGraphNodes = set(G.nodes())
+    #The with statement is used to handle files and other resources. It ensures that the file is properly closed after its block of code is executed, even if an error occurs.
+    #'r' indicates that the file is opened in read mode
     with open(gmt_file_path, 'r') as file:
+        #F-strings allow you to embed expressions directly within curly braces {}.
         print( f"Read pathway annotations from file: {gmt_file_path}" )
         for line in file:
+            #GMT files (Gene Matrix Transposed files) in the context of biological data, particularly those used for pathway annotations or gene set data, are typically tab-delimited.
+            #strip Removes any leading and trailing whitespace  then split Splits the string into a list of substrings, using the tab character (\t) as the delimiter.
             parts = line.strip().split('\t')
             # The first part is the gene set name, the second part is usually a description
             gene_set_name = parts[0]
+            #Performs a set intersection operation to find elements (genes) that are in both set(parts[2:]) and setOfGraphNodes.
             genes = set(parts[2:]).intersection(setOfGraphNodes)
+            #store pathways and their genes in gene_sets[pathwayname] that only have 10 to 500 genes in them, WHY?
             if len(genes) >= minSize and len(genes) <= maxSize:
                 gene_sets[gene_set_name] = genes
     return gene_sets
 
 def loadPathwayDatabases( G : nx.Graph, filenames : list = None, train_ratio = 0.8 ):
 
+    #each file in filenames contains two columns representing the unique pathway and then the genes that belong to that pathway
     list_nodes = list(G.nodes())
 
     # Create a dictionary to store tensors for each DB
+    #Stores tensors (likely PyTorch or NumPy tensors) for each database.
+    #ensors are used to store inputs (features), outputs (labels), model weights, and intermediate computations in neural networks.
+    #Tensors are optimized for large-scale computations and can leverage GPUs for parallel processing.
+    #Frameworks like PyTorch enable automatic differentiation with tensors, which is essential for training deep learning models.
+    #Tensors support advanced mathematical operations like matrix multiplication, slicing, reshaping, and broadcasting, making them highly versatile.
     db_tensors = {}
     train_indices = {}
     valid_indices = {}
@@ -157,6 +172,8 @@ def loadPathwayDatabases( G : nx.Graph, filenames : list = None, train_ratio = 0
         pathways = import_gmt_file( G, filename )
 
         # Randomly select pathways for training (and the others for validation)
+        #using rd.sample from import random randomly selects k unique elements from pathways based on train_ratio 0.8 of len of pathways
+        #listpathways.keys() Output: ['Pathway1', 'Pathway2', 'Pathway3']
         selected_pathways_for_training = set(rd.sample(list(pathways.keys()), k = round(len(pathways) * train_ratio)))
 
         unique_genes = set().union(*pathways.values())
@@ -451,6 +468,8 @@ def runModel( dataset, args ):
     df.to_csv( f"{args.output_dir}/results.csv" )
 
     print( "End of training." )
+
+#MAIN
 # since we did not import the file gnn4dm.py but instead the first steo we did to run this main to call gnn4dm
 #using python gnn4dm.py then theif condition is true and so the main runs
 #python gnn4dm.py --graph ./data/StringDB/STRING_v12_edgelist.txt --input_features ./data/GTEx/GTEx_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm_processed.txt ./data/GWASAtlas/gwasATLAS_v20191115_magma_P_non-ukb_True512_processed.txt ./data/StringDB/centrality_measures.txt --pathway_databases ./data/MSigDB/biocarta_ensembl.gmt ./data/MSigDB/kegg_ensembl.gmt ./data/MSigDB/reactome_ensembl.gmt ./data/MSigDB/wikipathways_ensembl.gmt
