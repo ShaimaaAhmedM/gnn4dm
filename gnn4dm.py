@@ -158,7 +158,7 @@ def loadPathwayDatabases( G : nx.Graph, filenames : list = None, train_ratio = 0
 
     # Create a dictionary to store tensors for each DB
     #Stores tensors (likely PyTorch or NumPy tensors) for each database.
-    #ensors are used to store inputs (features), outputs (labels), model weights, and intermediate computations in neural networks.
+    #tensors are used to store inputs (features), outputs (labels), model weights, and intermediate computations in neural networks.
     #Tensors are optimized for large-scale computations and can leverage GPUs for parallel processing.
     #Frameworks like PyTorch enable automatic differentiation with tensors, which is essential for training deep learning models.
     #Tensors support advanced mathematical operations like matrix multiplication, slicing, reshaping, and broadcasting, making them highly versatile.
@@ -176,21 +176,31 @@ def loadPathwayDatabases( G : nx.Graph, filenames : list = None, train_ratio = 0
         #listpathways.keys() Output: ['Pathway1', 'Pathway2', 'Pathway3']
         selected_pathways_for_training = set(rd.sample(list(pathways.keys()), k = round(len(pathways) * train_ratio)))
 
+        #pathways.values returns the gene list that belongs to each pathway
+        #the * operator unpacks all the lists (or iterables) from pathways.values() and passes them as separate arguments to the set.union method.
         unique_genes = set().union(*pathways.values())
         num_unique_genes = len(unique_genes)
 
         # Create an empty tensor with the correct number of columns and rows
         tensor_shape = (len(list_nodes), len(pathways))
+        #torch.zeros() is a pytorch function that creates a tensor filled with zeros
+        #The * operator unpacks the dimensions from the tensor_shape and passes them as individual arguments to
+        #If tensor_shape = (3, 4), torch.zeros(*tensor_shape) is equivalent to torch.zeros(3, 4).
         db_tensor = torch.zeros(*tensor_shape, dtype=torch.float32)
+        #Since torch.zeros_like fills the tensor with zeros, and in the boolean context 0 translates to False, all elements of the tensor will be False.
+        #A mask like train_mask is typically used to indicate which elements or indices in a dataset are selected for training or other operations.
         train_mask = torch.zeros_like(db_tensor, dtype=torch.bool)
         valid_mask = torch.zeros_like(db_tensor, dtype=torch.bool)
 
         # find those node indices on which we have info in this db (i.e. those geneids that participate in at least one pathway in this db)
         # this will be the union of the training and validation indices
+        #map each gene in unique_genes to it's index from list_nodes creating a set of indices
         known_node_indices_in_db = {list_nodes.index(id) for id in unique_genes}
 
         name_index = 0
+        #creates an empty list of the pathway names that can grow dynamically as elements are appended 
         names = list()
+        #pathway.items() returns all key-value pairs in the dictionary as tuples in a list ex Output:([("Pathway1", ["GeneA", "GeneB"]),...]) 
         for pathway_name, pathway_genes in pathways.items():
             # Check if this pathway is selected for training
             if pathway_name in selected_pathways_for_training:
@@ -222,10 +232,13 @@ def loadPathwayDatabases( G : nx.Graph, filenames : list = None, train_ratio = 0
                 train_mask[list(positive_train_indices | negative_train_indices), name_index] = True
                 valid_mask[list(positive_valid_indices | negative_valid_indices), name_index] = True
 
+                #This block of code contains a series of assertions to validate specific conditions regarding the disjointness and completeness of training and validation indices for both positive and negative categories.
+                #Ensures that the training and validation sets for positive samples are distinct.
                 assert positive_train_indices.isdisjoint(positive_valid_indices), "Positive indices are not disjoint"
                 assert negative_train_indices.isdisjoint(negative_valid_indices), "Negative indices are not disjoint"
                 assert positive_train_indices.isdisjoint(negative_train_indices), "Train indices (pos vs neg) are not disjoint"
                 assert positive_valid_indices.isdisjoint(negative_valid_indices), "Train indices (pos vs neg) are not disjoint"
+                #Ensures that the union of all training and validation indices (both positive and negative) is equal to known_node_indices_in_db.
                 assert known_node_indices_in_db == ( positive_train_indices | negative_train_indices | positive_valid_indices | negative_valid_indices ), "Train + valid indices not equal to all potential indices"
 
             names.append( pathway_name )
@@ -515,16 +528,26 @@ if __name__ == "__main__":
     # Load and process the pathway databases
     ground_truth, train_indices, valid_indices, term_ids = loadPathwayDatabases( G=G, filenames=args.pathway_databases )
 
+    #The provided code creates two dictionaries that map between graph nodes in G and their corresponding indices.
+    #zip is used to pair two lists element by element and range Generates a range object from 0 to the number of nodes in G
+    #The dictionaries are inverse mappings of each other, making it easy to switch between node labels and indices.
+    #dict(...): Converts the zipped pairs into a dictionary
+    #ex output Node to Index: {'A': 0, 'B': 1, 'C': 2}, Index to Node: {0: 'A', 1: 'B', 2: 'C'}
     node_dict = dict( zip( list(G.nodes), range(len(G.nodes)) ) )
     node_index_dict = dict( zip( range(len(G.nodes)), list(G.nodes) ) )
 
-    # relabel nodes (into numbers)
+    # relabel nodes (into numbers) Converting descriptive labels (e.g., "GeneA", "GeneB") into numerical indices from node_dic for algorithms.
     GPrime = nx.relabel_nodes( G, node_dict )
     
-    # convert to pyg data format
+    # convert netwrokx graph to pyTorch geometric data object
+    #this function is part of pytorch geometric (from torch_geometric.utils import from_networkx)
+    #The resulting Data object is directly compatible with PyTorch Geometric layers like GCNConv or GraphConv.
     data = from_networkx( GPrime )
     data.x = input_features
 
+    #** in {**ground_truth} is the dictionary unpacking operator in Python. to create a shallow copy of a dictionary. 
+    #** ensures modifications to the new dictionary do not affect the original one.
+    #removing ** and directly assigning ground_truth to data.ys any modification to data.ys will affect ground_truth as well, and vice versa
     data.ys = {**ground_truth}
     data.train_indices = {**train_indices}
     data.valid_indices = {**valid_indices}
