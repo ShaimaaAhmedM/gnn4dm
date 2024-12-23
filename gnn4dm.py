@@ -364,6 +364,7 @@ def getDevice():
 
 def runModel( dataset, args ):
 
+    #from data.py and prints different statistics about the graph
     show_dataset( dataset )
 
     data = dataset['data']
