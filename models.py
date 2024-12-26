@@ -21,27 +21,57 @@ def reset(value):
         for child in value.children() if hasattr(value, 'children') else []:
             reset(child)
 
+"""
+The base class torch.nn.Linear class implements a fully connected (dense) layer. Its main features are
+Weight Matrix: Multiplies the input by a learnable weight matrix.
+Bias Vector: Adds a learnable bias term (optional).
+Use torch.nn.Linear when you need:
+Feature transformation: Map input features to output features.
+Linear relationships: Capture dependencies between input and output.
+Dimensionality adjustment: Reduce or expand feature dimensions.
+Inter-layer connections: Connect layers in a neural network.
+Output predictions: Generate logits or values for regression, classification, or other tasks.
+"""
 class PositiveLinear(torch.nn.Linear):
+    #constructor Calls the parent class constructor to initialize the linear layer.
     def __init__(self, in_features: int, out_features: int, bias: bool = True, ids: list = None, 
                  device = None, dtype = None):
+        #When super() is used in the __init__ method It calls the constructor (__init__) of the parent class (torch.nn.Linear), ensuring that the attributes and behavior of the parent class are properly initialized in the child class.
         super(PositiveLinear, self).__init__(in_features, out_features, bias, device, dtype)
 
         assert out_features == len(ids), "Number of ids doesn't match with the number of out_features."
         
-        # populate mappings of identifiers to indices of the weight parameter matrix
+       
+        #storing ids as self.id_list allows the layer to associate its outputs with meaningful terms or pathways.
         self.id_list = ids
+        #populate mappings of pathways "value" to indices of the weight parameter matrix {'Pathway1': 0, 'Pathway2': 1,..}
+        #enumerate function generates pairs of (index, value) for each element in ids.
         self.id_to_position = {value: index for index, value in enumerate(ids)} if ids is not None else None
-
+        #Redundant check to ensure ids matches the number of out_features.
         if ids != None:
             assert len(ids) == out_features, "The number of ids doesn't match with the number of output features."
 
+    # Performs the forward pass and ensures weights remain non-negative.
     def forward(self, x):
-        self.weight.data.clamp_(min=0.0)  # Apply the constraint on weights
+        #apply the constraint on weights it ensuring all weights in the layer are non-negative by clamping values below 0.0 to 0.0.
+        #This maintains constraints for specific use cases, such as modeling pathways or gene expressions that always have to be positive to be meaningful.
+        self.weight.data.clamp_(min=0.0)
+        #Calls the parent class's forward method to compute y=xW(transpose)+b
         return super(PositiveLinear, self).forward(x)
 
+    #These norms are often used for regularization, which adds a penalty to the loss function in training based on the magnitude of the weights
+    #L1 Norm: Sum of the absolute values of the positive weights.Promotes sparsity, making many weights zero
+    #Useful when you want the model to focus on a smaller subset of important features. Example: Feature selection tasks.
+    #L2 Norm: Euclidean magnitude (square root of sum of squares) of the positive weights.
+    #Encourages small, evenly distributed weights.Helps prevent overfitting by reducing the impact of individual weights.Example: General regression or classification tasks.
     def l1_l2_losses(self):
+        #torch.where(condition, x, y)This function works like an "element-wise if-else"
+        #condition results in tensor of boolean values (True or False) specifying the condition for each element.
+        #If the condition is True for a particular element, take the value from x The tensor x has original weights.
+        #Otherwise, take the value from y, y tensor is the same size tensor as x but all zeros.
         positive_weights = torch.where(self.weight > 0, self.weight, torch.zeros_like(self.weight))
 
+        #torch.norm calculates l1 or l2 based on p=?
         l1 = torch.norm(positive_weights, p=1)
         l2 = torch.norm(positive_weights, p=2)
 
