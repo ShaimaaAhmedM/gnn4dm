@@ -359,6 +359,7 @@ def test(model, data, G : nx.Graph):
 def getDevice():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print( f"Using device: {str(device)}" )
+    #converts string into torch.device object which is a PyTorch representation of the hardware (CPU or GPU) where tensors and models will reside
     device = torch.device(device)
     return device
 
@@ -370,15 +371,29 @@ def runModel( dataset, args ):
     data = dataset['data']
     G = dataset['graph']
     
-    # Get available device
+    # Get available device gpu if found f not choose cpu
     device = getDevice()
     # Send data to device
     data = data.to(device)
-
+    #An epoch represents one complete pass through the entire training dataset.
+    #The number of epochs is chosen based on the complexity of the model and dataset.
+    #A higher number of epochs allows the model to train longer and potentially improve performance, but it risks overfitting if the model is trained excessively.
+    #Start with a reasonable value (e.g., 100 or 500) and increase as needed based on performance
     epochs = 5000
+    #Every eval_steps training steps (iterations), the model is evaluated on a validation or test dataset to monitor performance.
+    #Choosing a smaller eval_steps (e.g., 50) ensures frequent feedback during training, helping you monitor progress and detect issues like overfitting or underfitting.
     eval_steps = 50
 
     output_models = {}
+    #iterates over databases (db) and their associated terms (ids) stored in dataset['term_ids'].
+    """
+    dataset = {
+    'term_ids': {
+        'Reactome': ['Immune_System', 'Cell_Cycle'],
+        'KEGG': ['Metabolism', 'Signal_Transduction']
+        }
+    }
+    """
     for db, ids in dataset['term_ids'].items():
         output_models[db] = PositiveLinear( in_features = args.module_count, 
                                             out_features = len(ids), 
@@ -500,6 +515,7 @@ if __name__ == "__main__":
     parser.add_argument('--input_features', type=str, required=True, metavar="FILE_PATH", nargs='+', help='Paths to one or more TXT files containing node features (first column: node ids; no headers). All files will be merged to form the initial input features for the nodes in the graph. Missing values will be imputed using feature-wise mean values.')
     parser.add_argument('--pathway_databases', type=str, required=True, metavar="FILE_PATH", nargs='+', help='Paths to one or more GMT files containing pathway annotations (using the same ids as in the graph).')
     # Add other hyperparameters as optional arguments
+    #'./results' indicates a relative path to a directory named results in the current working directory.
     parser.add_argument('--output_dir', type=str, default='./results', help='Output directory.')
     parser.add_argument('--module_count', type=int, default=500, help='Maximum number of modules to detect.')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate.')
