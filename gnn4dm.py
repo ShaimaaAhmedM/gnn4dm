@@ -405,6 +405,7 @@ def runModel( dataset, args ):
         'KEGG': PositiveLinear(in_features=128, out_features=3, ids=['PathwayA', 'PathwayB', 'PathwayC'])
         }
         """
+        #.to(device):Moves the layer to the appropriate hardware (CPU or GPU) for efficient computation.
         output_models[db] = PositiveLinear( in_features = args.module_count, 
                                             out_features = len(ids), 
                                             ids = ids ).to(device)
