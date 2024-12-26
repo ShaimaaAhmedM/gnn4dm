@@ -395,6 +395,16 @@ def runModel( dataset, args ):
     }
     """
     for db, ids in dataset['term_ids'].items():
+        #for each db kegg for example set in_feature to 500 to represent column features for each gene
+        #out_features: Set to len(ids) (number of output pathways for the database)
+        #ids is the list of pathways for the current database.
+        # output_models[db] adds the initialized PositiveLinear layer to the output_models dictionary.
+        """
+        output_models = {
+            'Reactome': PositiveLinear(in_features=128, out_features=2, ids=['Pathway1', 'Pathway2']),
+        'KEGG': PositiveLinear(in_features=128, out_features=3, ids=['PathwayA', 'PathwayB', 'PathwayC'])
+        }
+        """
         output_models[db] = PositiveLinear( in_features = args.module_count, 
                                             out_features = len(ids), 
                                             ids = ids ).to(device)
