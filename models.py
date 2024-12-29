@@ -26,11 +26,12 @@ The base class torch.nn.Linear class implements a fully connected (dense) layer.
 Weight Matrix: Multiplies the input by a learnable weight matrix.
 Bias Vector: Adds a learnable bias term (optional).
 Use torch.nn.Linear when you need:
-Feature transformation: Map input features to output features.
+Feature transformation: Map input features (not raw input in this case) to output features.
 Linear relationships: Capture dependencies between input and output.
 Dimensionality adjustment: Reduce or expand feature dimensions.
 Inter-layer connections: Connect layers in a neural network.
 Output predictions: Generate logits or values for regression, classification, or other tasks.
+Why Use torch.nn.Linear in GNNs?In this GNN example As an output layer to map graph features (module_representation_channels) to task-specific outputs in PositiveLinear.
 """
 class PositiveLinear(torch.nn.Linear):
     #constructor Calls the parent class constructor to initialize the linear layer.
@@ -79,21 +80,40 @@ class PositiveLinear(torch.nn.Linear):
         return l1, l2
 
     
+#this class defines the GNN model as a PyTorch module, allowing it to: Integrate seamlessly into PyTorch’s training framework.
 #We use torch.nn.Module as the base class for all neural network models in PyTorch. It provides a framework for defining, managing, and training deep learning models by handling critical aspects like parameter management, forward propagation, and model evaluation.
 class GNN(torch.nn.Module):
     #in_channels in GNN refers to the raw input features at the start of the model.
+    #The hidden_channels_before_module_representation parameter refers to the sizes of the intermediate layers (hidden layers) in the Graph Neural Network (GNN) before it produces the final output, which is called the module representation.
+    #if hidden_channels_before_module_representation is a single number like 128, it means there is only one hidden layer before the module representation layer, this hidden layer had 128 features.
+    #this simplifies the architecure to input->hidden layer-> module representation
+    #if batchnorm=True, adds a BatchNorm1d layer after the hidden layer.
+    #module_representation_channels: Size of the final GNN output (number of features per node in the module representation).
+    #out_models: Dictionary of task-specific output models (e.g., PositiveLinear layers).
+    #batchnorm: Whether to apply batch normalization to stabilize training.
+    #transform_probability_method: Method for transforming module representations into probabilities (tanh in call).
+    #type: The type of GNN layer (e.g., GCN, GAT, MLP).
+    #threshold a parameter that scales or normalizes GNN outputs before transforming them into probabilities. Ensures outputs are mapped into a valid range (e.g., 0 to 1),
     def __init__(self, 
                  in_channels, hidden_channels_before_module_representation, module_representation_channels, out_models : dict, 
                  dropout = 0.0, batchnorm = False, transform_probability_method : str = "tanh", threshold = 1.0,
                  type : str = "GCN" ):
         super(GNN, self).__init__()
 
+        #self.convs creates a container to hold the GNN layers (graph convolution layers or linear layers).
+        #ModuleList is used because it allows us to dynamically add layers and ensures they are properly registered as part of the model.
         self.convs = torch.nn.ModuleList()
+        #sefl.batchnorms_convs creates a container for batch normalization layers.
+        #Batch normalization is used after each GNN layer (if enabled) to normalize the output of the layer, making training more stable.
         self.batchnorms_convs = torch.nn.ModuleList()
+        #The self.output_models dictionary connects the module representation output of the GNN to the specific tasks (pathways) you want to analyze or predict.
+        # A dictionary that stores the output models (e.g., PositiveLinear layers) for each pathway
+        # torch.nn.ModuleDict Registers the models from out_models into a single dictionary, ensuring they are part of the GNN and will be updated during training.            
         self.output_models = torch.nn.ModuleDict({ key: out_model for key, out_model in out_models.items() })
 
         self.type = type
 
+        # this block creates the intermediate (hidden) layers for the GNN based on the sizes specified in hidden_channels_before_module_representation.
         # clean zeros from hidden channel counts
         if 0 in hidden_channels_before_module_representation: hidden_channels_before_module_representation.remove(0)
         
@@ -101,6 +121,10 @@ class GNN(torch.nn.Module):
         channels = in_channels
         for hidden_channel in hidden_channels_before_module_representation:
             if type == "GCN":
+                #Checks the type of GNN layer specified (e.g., GCN, MLP, etc.) and appends the corresponding layer to self.convs
+                #A standard Graph Convolutional Network (GCN) layer that aggregates features from neighboring nodes.
+                #improved=True: Uses an improved version of GCN with better accuracy.
+                #cached=True: Speeds up repeated computations for static graphs.
                 self.convs.append( torch_geometric.nn.GCNConv(channels, hidden_channel, improved=True, cached=True) )
             elif type == "MLP":
                 self.convs.append( torch.nn.Linear(channels, hidden_channel) )
@@ -110,8 +134,12 @@ class GNN(torch.nn.Module):
                 self.convs.append( torch_geometric.nn.SAGEConv(channels, hidden_channel) )
             if batchnorm:
                 self.batchnorms_convs.append( torch.nn.BatchNorm1d(hidden_channel) )
+            #Updates the number of input features for the next layer to match the output size of the current layer.
             channels = hidden_channel
-
+        
+        #this block adds the Final GNN Layer
+        #This is the last step before transforming data into pathway-specific predictions.
+        #This layer transforms channels-dimensional features into module_representation-dimensional features for each node.
         if type == "GCN":
             self.conv_last = torch_geometric.nn.GCNConv(channels, module_representation_channels, improved=True, cached=True)
         elif type == "MLP":
@@ -122,9 +150,11 @@ class GNN(torch.nn.Module):
             self.conv_last = torch_geometric.nn.SAGEConv(channels, module_representation_channels)
 
         channels = module_representation_channels
-        
+        #Dropout: Adds regularization to the model by randomly dropping some features during training
+        #Example: dropout = 0.5 means 50% of features will be randomly set to zero.
         self.dropout = dropout
-        
+
+        #Threshold: Controls how the final GNN outputs are transformed into probabilities.
         self.transform_probability_method = transform_probability_method
         if threshold == 'auto':
             if self.transform_probability_method == 'tanh':
@@ -134,6 +164,8 @@ class GNN(torch.nn.Module):
         else:
             self.threshold = torch.nn.Parameter(torch.tensor(inv_softplus(threshold)), requires_grad = False)
 
+        #This line creates a string representation of the model’s architecture, called _short_name, which provides a concise summary of the GNN’s structure.
+        #an example of the output string could be self._short_name = "GCN_10-[64-128]--Modules:32--LIN[Pathway1|Pathway2]"            
         self._short_name = f"{self.type}_{in_channels}-[{'-'.join([str(h) for h in hidden_channels_before_module_representation])}]--Modules:{module_representation_channels}--LIN[{'|'.join([k for k in out_models])}"
 
     def reset_parameters(self):
