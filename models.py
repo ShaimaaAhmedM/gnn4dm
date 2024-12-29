@@ -34,6 +34,7 @@ Output predictions: Generate logits or values for regression, classification, or
 """
 class PositiveLinear(torch.nn.Linear):
     #constructor Calls the parent class constructor to initialize the linear layer.
+    #Refers to the processed features produced by the GNN and passed to the task-specific linear layer.
     def __init__(self, in_features: int, out_features: int, bias: bool = True, ids: list = None, 
                  device = None, dtype = None):
         #When super() is used in the __init__ method It calls the constructor (__init__) of the parent class (torch.nn.Linear), ensuring that the attributes and behavior of the parent class are properly initialized in the child class.
@@ -78,7 +79,9 @@ class PositiveLinear(torch.nn.Linear):
         return l1, l2
 
     
+#We use torch.nn.Module as the base class for all neural network models in PyTorch. It provides a framework for defining, managing, and training deep learning models by handling critical aspects like parameter management, forward propagation, and model evaluation.
 class GNN(torch.nn.Module):
+    #in_channels in GNN refers to the raw input features at the start of the model.
     def __init__(self, 
                  in_channels, hidden_channels_before_module_representation, module_representation_channels, out_models : dict, 
                  dropout = 0.0, batchnorm = False, transform_probability_method : str = "tanh", threshold = 1.0,
