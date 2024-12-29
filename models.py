@@ -167,32 +167,51 @@ class GNN(torch.nn.Module):
         #This line creates a string representation of the model’s architecture, called _short_name, which provides a concise summary of the GNN’s structure.
         #an example of the output string could be self._short_name = "GCN_10-[64-128]--Modules:32--LIN[Pathway1|Pathway2]"            
         self._short_name = f"{self.type}_{in_channels}-[{'-'.join([str(h) for h in hidden_channels_before_module_representation])}]--Modules:{module_representation_channels}--LIN[{'|'.join([k for k in out_models])}"
-
+    
+    #This method initializes or resets the parameters (weights and biases) of all layers in the GNN.
+    #Ensures all layers start with random, properly initialized weights.
+    #Proper initialization (e.g., orthogonal) helps prevent issues like vanishing or exploding gradients.
+    #Allows consistent re-initialization during experiments.
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
             if self.type == "GCN": 
+                #Ensures that the weight matrix is orthogonal (its columns are linearly independent).
+                #Helps stabilize training, especially for deep models.
                 torch.nn.init.orthogonal_( conv.lin.weight )        # orthogonal initialization
         self.conv_last.reset_parameters()
         if self.type == "GCN":
             torch.nn.init.orthogonal_( self.conv_last.lin.weight )  # orthogonal initialization
+        #Loops through all task-specific output models (PositiveLinear layers) and calls their reset_parameters() method.
         for ll in self.output_models.values():
             ll.reset_parameters()
         for bn in self.batchnorms_convs:
             bn.reset_parameters()
 
+    #Defines how data flows through the GNN during the forward pass (inference or training).
+    #edge_index is a tensor of size (2, num_edges) that specifies the graph's connections (edges).row 1 is nodeA connected to node B in row 2 for example same column index.
+    #A tensor of size (num_nodes, in_channels) containing the input features for each node.
+    #output: module_representation(The learned node embeddings) and y_preds(Predictions for each pathway given x).
+    #Predictions for each pathway, indicating how strongly each gene in the network is associated with the genes that belong to a specific pathway.
+    #The predicted score for how strongly the graph node (gene) contributes to the specific genes in the pathway.
+    #A high value means the graph node (gene) has a strong connection or relevance to the pathway column (gene in the pathway).
+    #The model is predicting the extent to which every gene in the graph is associated with specific genes in the pathway.
+    #Biological Insight:Even genes not explicitly in the pathway might have indirect effects or associations due to their graph connections.
+    #The y_preds structure allows a detailed analysis of how all graph genes contribute to specific pathways, not just the genes explicitly in the pathway.
     def forward(self, x, edge_index):
+        #Iterate Over GNN hidden Layers seld.convs
         for i in range(len(self.convs)):
             if self.dropout != 0:
                 x = F.dropout(x, p=self.dropout, training=self.training)
             if self.type == "MLP":
                 x = self.convs[i](x) 
             else:
+                #For graph-based layers (e.g., GCNConv), the graph structure (edge_index) is used.
                 x = self.convs[i](x, edge_index) 
             x = F.relu(x)
             if i < len(self.batchnorms_convs):
                 x = self.batchnorms_convs[i](x)
-            
+       #apply dropout to the final layer    
         if self.dropout != 0:
             x = F.dropout(x, p=self.dropout, training=self.training)
 
@@ -202,6 +221,7 @@ class GNN(torch.nn.Module):
             x = self.conv_last(x, edge_index)
 
         # computing the module representations by applying a softplus activation (to enforce non-negative values)
+        #This is important for some tasks where negative values are not meaningful.
         x = F.softplus(x)
         # this leads to the module representations which will be returned
         module_representation = x
@@ -210,13 +230,17 @@ class GNN(torch.nn.Module):
         # x = tanh( k * x )
         # where k is a learnable scaling parameter
         # tanh(k*x) > 0.5 <=> x > 0.549306/k
+        #Ensures the outputs are in a range interpretable as probabilities (e.g., 0 to 1).
         if self.transform_probability_method == 'tanh':
             x = torch.tanh( F.softplus(self.threshold) * x )
         else:
             x = x / (x + F.softplus(self.threshold))
 
         # applying the final "interpretable" modules
+        #Creates an empty dictionary y_preds to store predictions for each pathway.
         y_preds = dict()
+        #For each pathway (key in self.output_models) Passes the probabilities (x) through the corresponding output model.
+        #Example: For "Pathway1", self.output_models["Pathway1"](x) computes the predictions ex pathway1: (num_nodes,num_genes_in_pathway1).
         for key in self.output_models:
             y_preds[key] = self.output_models[key](x)
 
