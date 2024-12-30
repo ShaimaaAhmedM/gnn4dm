@@ -256,24 +256,36 @@ class GNN(torch.nn.Module):
             l2_positives_loss += l2 
 
         return l1_positives_loss, l2_positives_loss
-    
+    #Declares this function as a property, meaning it can be accessed like an attribute (e.g., model.name).
     @property
     def name(self):
         return self._short_name
 
+    #Creates a string representation of the GNN model’s architecture.
     def __str__(self):
+        #Initializes an empty string to build the architecture description.
         arch = ""
+        #Iterates over all hidden GNN layers in self.convs.
         for i in range(len(self.convs)):
             if self.dropout != 0.0:
+                #If dropout is nonzero, appends the dropout rate to the architecture string:
                 arch += f"(dropout:{self.dropout}); "
+            #repr in python is like java's toString
+            #If a class does not explicitly define __repr__, Python provides a default implementation, which simply shows the object’s memory address, e.g., <GCNConv object at 0x...>.
+            #the output of repr here might be "GCNConv(128 -> 64); "
             arch += self.convs[i].__repr__() + "; "
+            #Appends the activation function (ReLU) used after the current layer.
             arch += "ReLU; "
+            #Checks if there is a batch normalization layer corresponding to the current GNN layer.
             if i < len(self.batchnorms_convs):
                 arch += self.batchnorms_convs[i].__repr__() + "; "
+        #ppends a string representation of the final GNN layer (self.conv_last) to the architecture description.
         if self.dropout != 0.0:
             arch += f"(dropout:{self.dropout}); "
         arch += self.conv_last.__repr__() + "; "
         arch += "SoftPlus; "
+        #Appends a description of the pathway-specific output models.
+        #output might append "{PositiveLinear(128 -> 10)|PositiveLinear(128 -> 5)}"
         arch += "{" + '|'.join( [self.output_models[key].__repr__() for key in self.output_models] ) + "}"
         return arch
 
