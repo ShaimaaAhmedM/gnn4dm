@@ -409,7 +409,10 @@ def runModel( dataset, args ):
         output_models[db] = PositiveLinear( in_features = args.module_count, 
                                             out_features = len(ids), 
                                             ids = ids ).to(device)
-
+    #This line creates a graph autoencoder-like architecture using a GNN-based encoder and a decoder. 
+    #A Graph Autoencoder Layer (GAEL)
+    #A GNN instance processes the input graph and node features, creating compact node representations (module_representation).
+    #The InnerProductDecoder decodes these representations to predict relationships (e.g., edge predictions) or reconstruct the graph.
     model = GAEL( encoder = GNN( in_channels = data.num_features, 
                                     hidden_channels_before_module_representation = [args.hidden_channels_before_module_representation], 
                                     module_representation_channels = args.module_count, 
