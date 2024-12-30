@@ -245,7 +245,29 @@ class GNN(torch.nn.Module):
             y_preds[key] = self.output_models[key](x)
 
         return module_representation, y_preds
+    """
+    L1 and L2 regularization are techniques used to prevent overfitting and improve the generalization of a machine learning model. 
+    They work by adding penalties to the model's loss function based on the magnitude of the model's weights. 
+    These penalties encourage smaller (or sparse) weights, helping the model avoid relying too heavily on specific features.
+    L1 Loss: The sum of the absolute values of the model's weights.
+    L2 Loss: The sum of the squared values of the model's weights.
+    L1 regularization forces many weights to become exactly zero deaming them not important. Helps identify the most important features or interactions in the pathway.
+    L2 regularization discourages large weights but doesn’t force them to zero.This makes the model more robust to small changes in the input data.
+    In this GNN architecture, the output models are responsible for mapping the module representation (general embeddings) into pathway-specific predictions. 
+    Applying L1 and L2 regularization to these models serves two purposes:
     
+    Encourages Interpretability:
+    Regularizing the weights helps ensure that the pathway-specific predictions are meaningful.
+    For example, sparsity from L1 can highlight which nodes (genes) are most critical for a specific pathway.
+    
+    Reduces Overfitting:
+    Output models deal with the final predictions, where overfitting is more likely since they directly relate to the target (e.g., pathway associations).
+    Regularization ensures these layers don’t over-rely on specific features.
+
+    The weights of the output models are regularized using L1 and L2 penalties.
+    These penalties are added to the main loss function during training in forward pass.
+    The total loss (including the regularization penalties) is used to calculate gradients during backpropagation:
+    """
     def output_models_l1_l2_losses(self):
         l1_positives_loss = 0.0
         l2_positives_loss = 0.0
@@ -289,42 +311,62 @@ class GNN(torch.nn.Module):
         arch += "{" + '|'.join( [self.output_models[key].__repr__() for key in self.output_models] ) + "}"
         return arch
 
-
+"""
+The decoder uses the inner product between node embeddings z to calculate:
+Pairwise similarity (or probability of edges) for specific node pairs.
+A dense adjacency matrix for all nodes.
+z is  matrix where each row represents the latent embedding of a node.
+"""
 class InnerProductDecoder(torch.nn.Module):
     r"""Inner product decoder.
 
     .. math::
         \sigma(\mathbf{Z}\mathbf{Z}^{\top})
-
+        The inner product (z @ z.T) measures similarity between node embeddings.
+        The sigmoid function maps these similarities into probabilities.
+        
     where :math:`\mathbf{Z} \in \mathbb{R}^{N \times d}` denotes the latent
     space produced by the encoder."""
     def __init__(self):
         super().__init__()
+        #Sets a shorthand name for the decoder, useful for logging or debugging.
         self._short_name = "IP"
 
     def forward(self, z: torch.Tensor, source: torch.Tensor, destination: torch.Tensor, sigmoid: bool = False) -> torch.Tensor:
         r"""Decodes the latent variables :obj:`z` into edge probabilities for
         the given node-pairs :obj:`edge_index`.
-
+        The forward method computes edge probabilities for specific pairs of nodes.
+        Edge probabilities are the model’s predictions about the likelihood of an edge existing between two nodes in the graph.
         Args:
             z (torch.Tensor): The latent space :math:`\mathbf{Z}`.
             sigmoid (bool, optional): If set to :obj:`False`, does not apply
                 the logistic sigmoid function to the output.
                 (default: :obj:`True`)
+                Sigmoid function to map the value to the range [0,1]
         """
+        #z[source] extracts embeddings for all source nodes ex [0, 1, 2]
+        #z[destination] extracts embeddings for all destination nodes ex [1, 2, 3]
+        # shape of z source or destination is (num_edges, embedding_dim)
+        #we multiply both z'sand end up with a matrix (num_edges, embedding_dim)
+        # Sums the element-wise products across the embedding dimension (dim=1).
+        # this reduces the tensor shape from (num_edges, embedding_dim) to 1D tensor of shape(num_edges,).
+        #Each value represents the similarity score (inner product) for a specific edge between a source and destination node.
         value = (z[source] * z[destination]).sum(dim=1)
         return torch.sigmoid(value) if sigmoid else value
 
     def forward_full(self, z: torch.Tensor, sigmoid: bool = False) -> torch.Tensor:
+        #The r before a string literal makes it a raw string in Python.
+        # It is useful when you want to include special characters like backslashes \ in a string without worrying about them being interpreted.
         r"""Decodes the latent variables :obj:`z` into a probabilistic dense
         adjacency matrix.
-
+        Computes pairwise similarities for all node pairs
         Args:
             z (torch.Tensor): The latent space :math:`\mathbf{Z}`.
             sigmoid (bool, optional): If set to :obj:`False`, does not apply
                 the logistic sigmoid function to the output.
                 (default: :obj:`False`)
         """
+        #adj is the output it's a dense adjacency matrix of shape (N, N)
         adj = torch.matmul(z, z.t())
         return torch.sigmoid(adj) if sigmoid else adj
     
