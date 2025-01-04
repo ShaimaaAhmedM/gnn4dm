@@ -17,7 +17,12 @@ EPS = 1e-15
 def reset(value):
     if hasattr(value, 'reset_parameters'):
         value.reset_parameters()
+    #else The reset function recursively traverses containers to reset their child layers.
     else:
+        #Checks for children value.children() in a container of modules like torch.nn.Sequential
+        #torch.nn.Sequential is a simple container that holds a sequence of layers, applied one after another.
+        #calls reset for each child if value has 'children' method
+        #If value doesn’t have children (i.e., it’s not a container module), this returns an empty list.
         for child in value.children() if hasattr(value, 'children') else []:
             reset(child)
 
@@ -379,7 +384,9 @@ class InnerProductDecoder(torch.nn.Module):
 
 class GAEL(torch.nn.Module):
     r"""Graph Autoencoder for Link Community Prediction.
-
+    Encodes graph data into latent representations (via an encoder).
+    Decodes these representations into edge probabilities or reconstructed adjacency matrices (via a decoder).
+    Computes various losses for training the model and optimizes it.
     Args:
         encoder (Module): The encoder module.
         decoder (Module): The decoder module. 
@@ -388,9 +395,10 @@ class GAEL(torch.nn.Module):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
+        #Defines a binary cross-entropy loss with logits. This is often used for binary classification problems (like edge prediction).
         self.bceloss = torch.nn.BCEWithLogitsLoss()
         GAEL.reset_parameters(self)
-
+    #Calls the reset_parameters method to reinitialize all model weights.
     def reset_parameters(self):
         reset(self.encoder)
         reset(self.decoder)
