@@ -183,6 +183,9 @@ class GNN(torch.nn.Module):
             if self.type == "GCN": 
                 #Ensures that the weight matrix is orthogonal (its columns are linearly independent).
                 #Helps stabilize training, especially for deep models.
+                #Orthogonal matrices are good at preserving the "energy" of the input during forward propagation.
+                #In recurrent neural networks (RNNs) and graph neural networks (GNNs), orthogonal initialization often improves stability and convergence.
+                #Orthogonal initialization ensures that the dot product of different rows (or columns) of the weight matrix is zero, making the rows/columns independent. 
                 torch.nn.init.orthogonal_( conv.lin.weight )        # orthogonal initialization
         self.conv_last.reset_parameters()
         if self.type == "GCN":
@@ -399,28 +402,63 @@ class GAEL(torch.nn.Module):
         self.bceloss = torch.nn.BCEWithLogitsLoss()
         GAEL.reset_parameters(self)
     #Calls the reset_parameters method to reinitialize all model weights.
+    
     def reset_parameters(self):
         reset(self.encoder)
         reset(self.decoder)
-
+   
+    #In Python, *args and **kwargs are special syntax for passing a variable number of arguments to a function.
+    #They allow you to write flexible and reusable functions that can handle any number of inputs.
+    #You can use both *args and **kwargs together to handle a mix of positional and keyword arguments in a single function.
+    #example_function(1, 2, 3, name="Alice", age=25)
+    #encode takes input data (typically node features and/or graph structure) and passes it through the encoder, which computes node embeddings.
     def encode(self, *args, **kwargs):
         r"""Runs the encoder and computes node-wise latent variables."""
         return self.encoder(*args, **kwargs)
-
+    #decode then takes these embeddings and passes them through the decoder, which reconstructs the graph structure, often in the form of edge probabilities.
     def decode(self, *args, **kwargs):
         r"""Runs the decoder and computes edge probabilities."""
         return self.decoder(*args, **kwargs)
     
+    #This method calculates the threshold for determining whether a node belongs to a community (or module). It does so based on the encoder's probability
+    #A node's probability of being in a community is compared to this threshold. If it exceeds the threshold, the node is considered part of the community.
     def getThresholdOfCommunities(self):
-        r"""Returns the threshold above which the probability of being in a module is greater than 0.5."""
+        r"""Returns the threshold which is a scalar value above which the probability of being in a module is greater than 0.5."""
+        #If the encoder uses hyperbolic tangent (tanh) to transform probabilities
+        #The value 0.549306 corresponds to ln(2), which represents the point where the sigmoid output exceeds 0.5 for the tanh-based transformation.
+        #ln(2) A mathematical constant used to normalize thresholds for tanh
+        #F.softplus(x) is a smooth approximation of the ReLU function
+        #It ensures that the threshold is always positive, which is useful for stability.
         if self.encoder.transform_probability_method == 'tanh':
             return 0.549306 / F.softplus(self.encoder.threshold)
         else:
             return F.softplus(self.encoder.threshold)
 
     def edgeTriplet_loss(self, L_pos, pos_index, neg_index, margin=0.5):
-        r"""Computes triplet loss for anchor, positive and negative (but existing) edges."""
-        
+        r"""Computes triplet loss for anchor, positive and negative (but existing) edges.
+        This method computes the triplet loss for graph edges.
+        The triplet loss is designed to improve the model's ability to:
+        Predict the positive edge (i.e., increase its score or probability).
+        Reject the negative edge (i.e., decrease its score or probability).
+
+        Thus, for every anchor edge:
+        It needs one positive edge to reinforce its prediction.
+        It needs one negative (non existent) edge to ensure the model differentiates between positive and negative cases.
+            rhis means that L_pos and pos_indec and neg_index should be equal in length
+        The anchor edge itself is not simultaneously positive and negative. Instead it is the basis of comparison between a positive and a negative edge.
+        The model assigns a higher probability to positive edges (real connections between nodes) than to negative edges (non-existing or irrelevant connections).
+        margin A scalar value representing the minimum difference required between positive and negative edge probabilities.
+        L_pos A tensor of latent representations or edge scores for the anchor edges (e.g., the edges being evaluated).
+        L_pos scores represent how the model "rates" each edge.
+        pos_index A list or tensor of indices indicating the positions of the positive edges (real edges) among the anchor edges.
+        neg_index A list or tensor of indices indicating the positions of the negative edges (non-existing or irrelevant edges).
+        neg_index These are used to "confuse" the model and force it to learn better representations by distinguishing between real (positive) and fake (negative) edges.
+        The function returns a single scalar value (the loss)
+        This loss tells the model how well it distinguishes between positive and negative edges. A smaller loss means better performance.
+        """
+        #shape is an attribute of a tensor or array that gives its dimensions
+        #shape[0] refers to the size of the first dimension (the number of rows for a 2D tensor or array).
+        #len(L_pos) would work just as well because it also returns the size of the first dimension for tensors.
         assert L_pos.shape[0] == len(pos_index), "The length of positive edge indices does not match the number of anchor edges."
         assert L_pos.shape[0] == len(neg_index), "The length of negative edge indices does not match the number of anchor edges."
         
