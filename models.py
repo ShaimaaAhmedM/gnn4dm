@@ -444,7 +444,9 @@ class GAEL(torch.nn.Module):
         Thus, for every anchor edge:
         It needs one positive edge to reinforce its prediction.
         It needs one negative (non existent) edge to ensure the model differentiates between positive and negative cases.
-            rhis means that L_pos and pos_indec and neg_index should be equal in length
+            this means that L_pos and pos_indec and neg_index should be equal in length
+        During training, the model processes a subset of edges from the graph(anchor edges).
+        The triplet loss doesn’t evaluate all edges at once—it processes edges in smaller batches
         The anchor edge itself is not simultaneously positive and negative. Instead it is the basis of comparison between a positive and a negative edge.
         The model assigns a higher probability to positive edges (real connections between nodes) than to negative edges (non-existing or irrelevant connections).
         margin A scalar value representing the minimum difference required between positive and negative edge probabilities.
@@ -461,7 +463,15 @@ class GAEL(torch.nn.Module):
         #len(L_pos) would work just as well because it also returns the size of the first dimension for tensors.
         assert L_pos.shape[0] == len(pos_index), "The length of positive edge indices does not match the number of anchor edges."
         assert L_pos.shape[0] == len(neg_index), "The length of negative edge indices does not match the number of anchor edges."
-        
+
+        #This line transforms the latent scores (L_pos) into probabilities using the exponential function.
+        #These scores are the raw outputs from the encoder and represent how "connected" or "related" the model thinks each anchor edge is.
+        #Why negate? Larger negative scores (L_pos) should correspond to smaller probabilities, and smaller negative scores should correspond to larger probabilities.
+        #In graph-based tasks, most edges are non-existent (graph sparsity). Using exp(-L_pos)ensures a larger range for negative edges (low latent scores) while pushing stronger edges (high latent scores) towards 0.
+        #During training, the model must learn to assign low scores to non-existent edges and high scores to real edges.
+        #In real-world graphs, most potential edges are non-existent (sparse graphs).
+        #Training the model on both existent and non-existent edges ensures it generalizes well and doesn’t mistakenly predict connections where none exist.
+        #The model assigns latent scores for both edges, which are then transformed into probabilities.
         E_anchor = torch.exp( -L_pos )
         E_positive = E_anchor[pos_index,:]
         E_negative = E_anchor[neg_index,:]
