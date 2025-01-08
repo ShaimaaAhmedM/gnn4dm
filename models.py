@@ -485,8 +485,19 @@ class GAEL(torch.nn.Module):
         return torch.mean(losses)
     
     def bce_loss(self, y_pred, target):
+        #self.bceloss is an instance attribute of class torch.nn.BCEWithLogitsLoss created in the __init__ method.
+        #This is often used for binary classification problems (like edge prediction).
         return self.bceloss( y_pred, target )
-    
+
+    """
+    The cosine_similarity_loss function ensures that:
+    Feature representations of different nodes are diverse.
+    High cosine similarity between nodes is penalized, encouraging the model to separate nodes effectively in the embedding space.
+    min_threshold A float specifying the minimum similarity value below which similarities are ignored (clamped to zero).
+    type A string specifying how the similarity loss should be calculated.
+    F feature matrix representing the node embeddings
+    Returns a scalar loss value that penalizes high similarities between rows of F
+    """
     def cosine_similarity_loss(self, F, type : str, min_threshold : float = 0.0):
         valid_type_values = ['max','l1','l2']
 
@@ -494,9 +505,21 @@ class GAEL(torch.nn.Module):
             raise ValueError(f"Invalid 'type' argument. Must be one of: {', '.join(valid_type_values)}")
     
         # Calculate cosine similarities for each column of the matrix
+        #calling a built in function from utils
         cosine_similarities = cosine_self_similarity(F)
 
+        #The torch.eye function creates an identity matrix of a given size.
+        #the first expected paramter is the size of the rows of the matrix
+        #the second paramter is the column which is set to none by default which defualts to same size as rows
+        #device = Specifies the device where the tensor will be stored
+        #it has more paramters but all kept as defualt since they werent intialized here
         eye_matrix = torch.eye(cosine_similarities.size(0), device=cosine_similarities.device)
+
+        #The torch.clamp function limits the values in a tensor to lie within a specified range.
+        #the first parameter is the input tensor whose values need to be clamped
+        #cosine_similarities - eye_matrix returns tensor basically sets all the diagonal elements to min=0 so neglected when calculating loss 
+        #- min_threshold returns tensor Reduces each similarity by min_threshold ensuring small would be clamped to min=0
+        #the diagonal represnts the similarity between each node and itslef and not with others
         off_diagonal_clamped_cosine_similarities = torch.clamp( ( cosine_similarities - eye_matrix) - min_threshold, min = 0.0 )
 
         if type == 'max':
@@ -511,12 +534,25 @@ class GAEL(torch.nn.Module):
 
     def rmse_of_module_size_loss(self, F, threshold, expected_mean):
         """
+        calculates how far the actual module sizes deviate from the expected mean size:
+        Returns a scalar RMSE value that quantifies the deviation of observed module sizes from the expected mean.
         Calculates the root mean squared error of the observed module sizes and the expected mean module size.
+        F a tensor where each element indicates the probability of a node belonging to a module.
+        F Rows represent nodes, columns represent modules.
+        threshold Nodes with probabilities≥threshold are considered part of the module.
+        expected_mean The target (expected) mean size of modules.
+        expected_mean Used to measure how far the observed module sizes deviate from this expected value.
         """
-        # Calculate the column-wise count of elements greater than the threshold
+        # Calculate the column-wise count of elements greater than the threshold torch.sum
+        #output is a tensor with the same size as the number of columns(modules)
         observed_values = torch.sum(F >= threshold, dim=0, dtype=torch.float)
+
+        # Removes modules with a size of 0 (i.e., empty modules) from the calculation.
         observed_values = observed_values[ observed_values > 0.0 ]
+        
         # Calculate root mean squared error of the observed module sizes and the expected mean module size
+        #RMSE penalizes large deviations more heavily than small ones (due to squaring).
+        #Empty modules don't contribute meaningfully to the loss and could skew the RMSE calculation.
         rmse = torch.sqrt(torch.mean((observed_values - expected_mean)**2))
         return rmse
 
