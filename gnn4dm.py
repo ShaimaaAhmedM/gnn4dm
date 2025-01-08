@@ -365,16 +365,23 @@ def getDevice():
 
 def runModel( dataset, args ):
 
+    #1)dataset overview->Helps confirm that the dataset has been loaded and processed correctly before training.
     #from data.py and prints different statistics about the graph
     show_dataset( dataset )
 
+    #2)Data preparation
+    #data is a tensor representation of the graph, including node features (data.x) and edge list (data.edge_index).
+    #The dataset['data'] key contains the graph data in a torch_geometric.data.Data object.
     data = dataset['data']
+    #G Graph in NetworkX format.
     G = dataset['graph']
     
-    # Get available device gpu if found f not choose cpu
+    #3)Device Configuration: getDevice() Returns torch.device('cuda') if available, otherwise torch.device('cpu').
     device = getDevice()
     # Send data to device
     data = data.to(device)
+
+    #4)training hyperparamteres
     #An epoch represents one complete pass through the entire training dataset.
     #The number of epochs is chosen based on the complexity of the model and dataset.
     #A higher number of epochs allows the model to train longer and potentially improve performance, but it risks overfitting if the model is trained excessively.
@@ -384,6 +391,7 @@ def runModel( dataset, args ):
     #Choosing a smaller eval_steps (e.g., 50) ensures frequent feedback during training, helping you monitor progress and detect issues like overfitting or underfitting.
     eval_steps = 50
 
+    #5)Initialize Output Models
     output_models = {}
     #iterates over databases (db) and their associated terms (ids) stored in dataset['term_ids'].
     """
@@ -395,10 +403,12 @@ def runModel( dataset, args ):
     }
     """
     for db, ids in dataset['term_ids'].items():
-        #for each db kegg for example set in_feature to 500 to represent column features for each gene
+        #for each db kegg for example set in_feature to 500 to represent column features for each gene in the latent space
+        #latent space refers to a lower-dimensional space where the essential features of the original high-dimensional data are preserved so output of the encoder
         #out_features: Set to len(ids) (number of output pathways for the database)
         #ids is the list of pathways for the current database.
         # output_models[db] adds the initialized PositiveLinear layer to the output_models dictionary.
+        #These PositiveLinear layers predict the membership probabilities of nodes in pathways.
         """
         output_models = {
             'Reactome': PositiveLinear(in_features=128, out_features=2, ids=['Pathway1', 'Pathway2']),
@@ -409,10 +419,16 @@ def runModel( dataset, args ):
         output_models[db] = PositiveLinear( in_features = args.module_count, 
                                             out_features = len(ids), 
                                             ids = ids ).to(device)
+    #6) Initialize the Model
     #This line creates a graph autoencoder-like architecture using a GNN-based encoder and a decoder. 
     #A Graph Autoencoder Layer (GAEL)
     #A GNN instance processes the input graph and node features, creating compact node representations (module_representation).
     #The InnerProductDecoder decodes these representations to predict relationships (e.g., edge predictions) or reconstruct the graph.
+    #hidden_channels_before_module_representation: Architecture for the GNN layers.
+    #module_representation_channels: Size of the latent space (args.module_count).
+    #num_features: This is an attribute of the Data object Represents the number of features per node in the graph.
+    #num_features: It is automatically set by PyTorch Geometric when x (the node feature matrix) is assigned
+    #When you load or create the graph, PyTorch Geometric sets data.num_features to: data.num_features = data.x.size(1)
     model = GAEL( encoder = GNN( in_channels = data.num_features, 
                                     hidden_channels_before_module_representation = [args.hidden_channels_before_module_representation], 
                                     module_representation_channels = args.module_count, 
@@ -425,20 +441,35 @@ def runModel( dataset, args ):
                     decoder = InnerProductDecoder() ).to(device)
 
     # print(model)
-
+    #7)Model Parameters and Initialization
+    #Counts all trainable parameters in the model total_params
+    #numel() counts the total elements in a tensor.
+    #Calls numel() on each parameter to count the total number of elements (weights and biases).
     total_params = sum(p.numel() for p in model.parameters())
     print("Total number of model parameters:", total_params)
-        
+    #Creates an AdamW optimizer and StepLR scheduler.    
     optimizer, scheduler = model.configure_optimizers( args )
+    #Reinitializes model weights for a fresh start.
     model.reset_parameters()
 
+    #8)Training Loop
     print( "Started training..." )
     final_results = list()
-    # start training
+    # start training range(start, stop) generates numbers starting from start up to, but not including, stop.
+    #tqdm Wraps any iterable (e.g., range) and displays progress as the iterable is consumed.
+    #tqdm A real-time progress bar showing the current epoch, total epochs, and elapsed/remaining time.
+    #Inside the loop, training logic is applied to process the dataset and update the model parameters.
     for epoch in tqdm(range(1, 1 + epochs)):
 
+        #8.1 Generate Negative Samples
+        #source_edge_index Source nodes for the sampled edges.
+        #pos_edge_index Destination nodes for positive edges (real edges).
+        #neg_edge_index Destination nodes for negative edges (non-existent edges).
+        #they have the same shape (num_edges,)
+        #Models must distinguish between positive and negative edges. Structured negative sampling provides a balanced and meaningful set of negative edges for training.
         source_edge_index, pos_edge_index, neg_edge_index = torch_geometric.utils.structured_negative_sampling( edge_index = data.edge_index )
 
+        #8.2 Shuffle and Split Edges
         # Generate a random permutation index
         num_samples = len(source_edge_index)
         perm = torch.randperm(num_samples)
