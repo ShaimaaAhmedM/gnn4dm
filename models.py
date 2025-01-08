@@ -556,39 +556,54 @@ class GAEL(torch.nn.Module):
         rmse = torch.sqrt(torch.mean((observed_values - expected_mean)**2))
         return rmse
 
+    #Outputs l1_loss: The cumulative L1 regularization loss for all GCNConv layers in the encoder.
+    # also l2_loss: The cumulative L2 regularization loss for all GCNConv layers in the encoder.
     def gcn_l1_l2_losses(self):
         l1_loss = 0.0
         l2_loss = 0.0
 
         for layer in self.encoder.modules():
             if isinstance(layer, torch_geometric.nn.GCNConv):
+                Computes the L1 norm of the weights for the linear transformation in the GCNConv layer.
                 l1_loss += torch.norm(layer.lin.weight, p=1)
+                #Computes the L2 norm of the weights for the linear transformation in the GCNConv layer.
                 l2_loss += torch.norm(layer.lin.weight, p=2)
 
         return l1_loss, l2_loss
-    
+
+    """
+    It delegates the computation to a method in the encoder, 
+    which iterates over all PositiveLinear layers in the output_models.
+    This is a call to a method in the encoder that computes the L1 and L2 losses for all output models.
+    The function iterates over all PositiveLinear layers in the output_models dictionary, computing and summing their L1 and L2 losses.
+    """
     def output_models_l1_l2_losses(self):
         return self.encoder.output_models_l1_l2_losses()
     
     def nll_BernoulliPoisson_loss(self, strength_pos_edges, strength_neg_edges, epsilon = 1e-8):
         r"""Given latent variables :obj:`H`, computes the Bernoulli-Poisson 
         loss for positive edges :obj:`pos_edge_index` and negative
-        sampled edges :obj:`neg_edge_index`.
-
+        sampled edges :obj:`neg_edge_index`. keyword sampled here used in training (on mini-batches)
+        Encourages positive edges (real connections) to have higher latent scores, increasing their likelihood.
+        Discourages negative edges (non-existent connections) from having high latent scores.
         Args:
             H (Tensor): The latent space :math:`\mathbf{H}`.
             pos_edge_index (LongTensor): The positive edges to train against.
             neg_edge_index (LongTensor): The negative edges to train against.
+            epsilon a small constant added to prevent numerical issues when computing logarithms or exponentials.
+        Returns a scalar loss value, the NLL Bernoulli-Poisson loss, which combines:
+        Log-likelihood for positive edges.
+        Mean value for negative edges.
         """
         
         ll_pos_edges = -torch.mean( torch.log( -torch.expm1( -strength_pos_edges - epsilon ) ) )
         ll_neg_edges = torch.mean( strength_neg_edges )
-
+        #Averages the positive and negative log-likelihoods into a single scalar loss value.
         ll = (ll_pos_edges + ll_neg_edges) / 2.0
         return ll
     
     def nll_BernoulliPoisson_loss_full(self, H, L_pos, num_edges, num_nonedges, epsilon = 1e-8):
-        """Compute full loss."""
+        """Compute full loss to evalute full graph. Loss for all positive edges and all non-existent edges and not sample"""
         strength_pos_edges = torch.sum( L_pos, dim=1 )
         strength_all_possible_edges = torch.sum( self.decoder.compute_all_possible_edge_strengths( H ) )
         loss_nonedges = strength_all_possible_edges - torch.sum( strength_pos_edges )
@@ -608,16 +623,27 @@ class GAEL(torch.nn.Module):
         This implementation is based on https://github.com/karpathy/minGPT
         We are separating out all parameters of the model into two buckets: those that will experience
         weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
-        We are then returning the PyTorch optimizer object.
+        We are then returning the PyTorch optimizer object AdamW
+        and also returns a learning rate scheduler (StepLR) to adjust the learning rate during training.
         """
 
         # separate out all parameters to those that will and won't experience regularizing weight decay
         decay = set()
         no_decay = set()
+        #whitelist includes layers whose weights benefit from regularization (e.g., torch.nn.Linear, GCNConv).
         whitelist_weight_modules = (torch.nn.Linear, PositiveLinear, torch_geometric.nn.GCNConv, torch_geometric.nn.GATv2Conv, torch_geometric.nn.SAGEConv)
+        #blacklist includes layers where regularization could harm performance (e.g., BatchNorm, LayerNorm).
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding, torch.nn.BatchNorm1d)
+        #outer loop Iterates through all modules in the model using named_modules() (e.g., GCN layers, batch normalization).
+        #mn The name of the current module. m is they type
+        #for example If mn = "gcn1", then m could be a torch_geometric.nn.GCNConv layer.
+        #inner loop Iterates through all parameters of each module using named_parameters() (e.g., weights, biases).
+        #pn The name of the current parameter. p parameter type most probably tensor
+        #For a linear layer (torch.nn.Linear), common parameters might include pn ="weight" and p could be torch.Tensor
+        #fpn Full name of the parameter	example "gcn1.weight"
         for mn, m in self.named_modules():
             for pn, p in m.named_parameters():
+                #If mn is empty or None (i.e., the parameter is at the top level) return parameter name otherwise %s.%s
                 fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
 
                 if pn.endswith('bias'):
