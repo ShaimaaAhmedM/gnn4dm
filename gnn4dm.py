@@ -253,48 +253,93 @@ def loadPathwayDatabases( G : nx.Graph, filenames : list = None, train_ratio = 0
     return db_tensors, train_indices, valid_indices, term_ids
 
 def train( model, data, source_edge_index, pos_edge_index, neg_edge_index, lambda_bce_loss, lambda_l1_positives_loss, lambda_l2_positives_loss, optimizer ):
+    #1. Set the Model to Training Mode
+    #The model.train() function is a method provided by PyTorch's torch.nn.Module
     model.train()
+
+    #2. reset gradients
+    #Gradients measure how much a model's output changes with respect to its parameters (e.g., weights, biases). 
+    #They are essential in backpropagation,
+    #the process used to optimize neural networks during training.
+    #If we don’t clear the gradients (using optimizer.zero_grad()),
+    #the new gradients will be added to the old ones, which is not what we want.
+    #The optimizer uses these gradients to update parameters.
+    #ex using gradient descent new_parameter = current_parameter - learning_rate * gradient
+    #After updating parameters, gradients are cleared to avoid accumulation.
+    #Think of gradients as a map guiding you downhill to the lowest point (the minimum of the loss function):
+    #gradient direction Tells you which direction to move to reduce the loss.
+    #gradient magnitude Tells you how steep the slope is and how much to adjust the parameters.
     optimizer.zero_grad()
 
-    # compute node embeddings with the encoder       
+    # 3. compute node embeddings with the encoder 
+    #data.x: Node features (tensor of size (num_nodes, num_features)).
+    #data.edge_index: Graph structure (edges).
+    #F: Latent node embeddings
+    #y_preds: Predictions for pathway memberships (output from PositiveLinear layers).
+    #calling self.encode(*args, **kwargs), Python internally calls the forward method of the GNN class.
     F, y_preds = model.encode( data.x, data.edge_index )
-    # compute link strength with the decoder for the positive and the negative edges, respectively
+    # 4. compute link strength with the decoder for the positive and the negative edges, respectively
     H_positive = model.decode( F, source_edge_index, pos_edge_index )
     H_negative = model.decode( F, source_edge_index, neg_edge_index )
-    # compute loss
-    ## Bernoulli-Poisson loss
+   
+    # 5.compute loss
+    ## 5.1 Bernoulli-Poisson loss
+    #Computes the Bernoulli-Poisson loss, which measures the model’s ability to distinguish positive and negative edges.
     bp_loss = model.nll_BernoulliPoisson_loss( H_positive, H_negative )
-    ## Binary cross-entropy losses for all datasets
+    ## Binary cross-entropy losses for all datasets for pathway memberships
+    #computes BCE loss for each pathway prediction
     bce_losses = dict()
+    #for each key or pathway in p_preds
     for key in y_preds:
         if data.train_indices[key].dim() == 1:
+            #y_preds[key] The predicted pathway membership probabilities for all nodes.
+            #A list or tensor of indices representing the training nodes for this pathway (key).
+            #y_preds[key][data.train_indices[key], :] Slices the y_preds tensor along the first dimension (rows).Selects only the predictions corresponding to the training nodes for this pathway.
+            #data.ys[key] The ground-truth labels for the pathway membership of all nodes.
             bce_losses[key] = model.bce_loss( y_preds[key][data.train_indices[key],:], data.ys[key][data.train_indices[key],:] )
         else:
             bce_losses[key] = model.bce_loss( y_preds[key][data.train_indices[key]], data.ys[key][data.train_indices[key]] )
-    ## L1 and L2 losses
+    ## 5.2. compute regularization losses (L1 and L2)
     l1_positives_loss, l2_positives_loss = model.output_models_l1_l2_losses()
-    ## compute final loss
+    ## 5.3. compute final loss
+    ##5.4Combines all loss components into a single scalar value.
     loss = bp_loss
     for bce_loss in bce_losses.values():
         loss += lambda_bce_loss * bce_loss
     loss += lambda_l1_positives_loss * l1_positives_loss
     loss += lambda_l2_positives_loss * l2_positives_loss
 
+    #6. Backpropagation
+    #loss.backward Computes gradients for all trainable parameters in the model based on the total loss.
+    #retain_graph=True Keeps the computation graph in memory, allowing further backward passes if needed (e.g., in complex training pipelines).
     loss.backward(retain_graph=True)
+    
+    #7. Optimizer Step
+    #Updates the model’s parameters using the gradients computed during backpropagation.
     optimizer.step()
 
     return
 
+"""
+@torch.no_grad()
+Purpose: Disables gradient computation for this function, 
+reducing memory usage and speeding up computations during evaluation.
+Gradients are not needed during testing because we are not updating the model parameters.
+"""
 @torch.no_grad()
 def test(model, data, G : nx.Graph):
+    #1. Set Model to Evaluation Mode
+    #Disables dropout.
+    #Freezes batch normalization layers (uses running stats instead of batch stats).
     model.eval()
 
-    # compute node embeddings with the encoder       
+    # 2. compute node embeddings with the encoder       
     F, y_preds = model.encode( data.x, data.edge_index )
 
     internal_evaluation_scores = {}
 
-    # compute BCE loss in validation sets of pathway DBs
+    #3. compute BCE loss in validation sets of pathway DBs
+    #Evaluate how well the model predicts pathway memberships on the validation nodes.
     bce_losses = dict()
     for key in y_preds:
         if data.valid_indices[key].dim() == 1:
@@ -302,14 +347,19 @@ def test(model, data, G : nx.Graph):
         else:
             bce_losses[key] = model.bce_loss( y_preds[key][data.valid_indices[key]], data.ys[key][data.valid_indices[key]] )
     # sum losses, and write them into the output
+    #Logs individual and summed BCE losses into internal_evaluation_scores.
     valid_bce_loss = 0.0
     for key, bce_loss in bce_losses.items():
         internal_evaluation_scores[f"bce_loss_{key}"] = bce_loss.item()
         valid_bce_loss += bce_loss.item()
     internal_evaluation_scores["sum_bce_loss"] = valid_bce_loss
 
-    # compute accuracy and F1 score in validation sets of pathway DBs
+    #4. compute accuracy and F1 score in validation sets of pathway DBs
+    #valid_indices slices both y_preds (predictions) and data.ys (ground truth) to restrict computations to the validation set.
     accuracies, sensitivities, specificities, precisions, f1_scores, auprcs = calculateMetrics( y_preds, data.ys, data.valid_indices )
+
+    #7. Log Metrics
+    #Logs individual and mean metrics for all pathways into the internal_evaluation_scores dictionary.
     for key in accuracies:
         internal_evaluation_scores[f"accuracy_{key}"] = accuracies[key]
         internal_evaluation_scores[f"sensitivity_{key}"] = sensitivities[key]
@@ -324,34 +374,98 @@ def test(model, data, G : nx.Graph):
     internal_evaluation_scores["mean_f1_score"] = statistics.mean(f1_scores.values())
     internal_evaluation_scores["mean_auprc"] = statistics.mean(auprcs.values())
 
+    #8. Compute Cosine Similarity Loss
+    #The cosine_similarity_loss function is a custom method that computes a similarity-based loss for latent embeddings.
+    #It penalizes excessive similarity between nodes (off-diagonal elements) to encourage diversity in the learned representations.
     cosine_self_similarity_loss = model.cosine_similarity_loss( F, type = 'l2', min_threshold = 0.1 )
     internal_evaluation_scores["cosine_self_similarity_loss"] = cosine_self_similarity_loss.item()
 
     internal_evaluation_scores["thresholdOfCommunities"] = model.getThresholdOfCommunities().item()
 
-    # get predicted communities
+    #9. get predicted communities
+    #Determines the threshold for assigning nodes to communities based on probabilities.
+    #If the embedding value for a node is greater than or equal to threshold, the node is considered part of that community.
+    #Normalizing ensures embeddings are comparable across nodes by scaling their values such that the sum of each row equals 1.
+    #pred_communities Contains non-empty communities mapped to the graph. It's an object of type NodeClustering
+    #original_communities Contains non-empty and empty communities.
     pred_communities, original_communities = getPredictecCommunities3( F, G, threshold = model.getThresholdOfCommunities(), normalize=False )
 
-    # and evaluate them
+    # and evaluate and log them in internal_evaluation_scores
     if pred_communities.communities != []:
         internal_evaluation_scores['count'] = len(pred_communities.communities)
+        # size() returns the size of nodes in each community By default, it provides a summary (e.g., average size) when summary=True (default behavior).
+        #.score() specifically computes the average size of the detected communities.
         internal_evaluation_scores['average_size'] = pred_communities.size().score
+        #Provides insight into the distribution of node memberships across communities.
+        #A large max_size may indicate:
+        #An imbalanced community structure.
+        #The presence of a dominant community (e.g., most nodes belong to one community).
         internal_evaluation_scores['max_size'] = np.max(pred_communities.size(summary=False))
+        #number of communities whose size is less than or equal to 5 
+        #np.array([2, 3, 1, 6]) <= 5  # Result: [True, True, True, False]
+        #np.sum([True, True, True, False])  # Result: 3
+        #A large number of small communities might indicate fragmentation, while very few small communities may suggest overly large or merged clusters
         internal_evaluation_scores['num_smaller_5'] = np.sum(np.array(pred_communities.size(summary=False)) <= 5)
         internal_evaluation_scores['num_smaller_10'] = np.sum(np.array(pred_communities.size(summary=False)) <= 10)
         internal_evaluation_scores['num_smaller_50'] = np.sum(np.array(pred_communities.size(summary=False)) <= 50)
         internal_evaluation_scores['num_smaller_100'] = np.sum(np.array(pred_communities.size(summary=False)) <= 100)
         internal_evaluation_scores['num_smaller_200'] = np.sum(np.array(pred_communities.size(summary=False)) <= 200)
+        #If node_coverage is low (nodesCoveredInCommunitites/totalNodes), 
+        #it indicates: Some nodes were not assigned to any community.The clustering algorithm may not effectively cover the graph.
         internal_evaluation_scores['node_coverage'] = pred_communities.node_coverage
+        #??
         internal_evaluation_scores['mean_module_per_node'] = (F >= model.getThresholdOfCommunities()).sum(dim=1).float().mean().item()
+        #This method computes the internal degree for each community in the NodeClustering object.
+        #The internal degree of a node is the number of edges it shares with other nodes within the same community.
+        #then we get the avg degree of each community by adding the internal degree of each node/ numb of nodes
+        #Retrieves the computed average internal degree across all communities from the Score object by adding the avg internal degree of each community/ numb of communities.
+        #To get a single metric summarizing the internal connectivity of nodes in the detected communities.
+        """
+        High Average Internal Degree:
+
+        Indicates strong connectivity within communities (nodes are well-linked to other nodes in their group).
+        Desired for dense, cohesive communities.
+        Low Average Internal Degree:
+        
+        Indicates sparse connectivity within communities.
+        Suggests weak or fragmented clusters.
+        """
         internal_evaluation_scores['average_internal_degree'] = pred_communities.average_internal_degree().score
+        """
+        Conductance quantifies how well-separated a community is from the rest of the graph. A lower conductance value indicates a well-defined community, 
+        meaning most edges are within the community, with relatively few connecting to nodes outside.
+        """
         internal_evaluation_scores['conductance'] = pred_communities.conductance().score
+        #Internal edge density quantifies the density of edges inside a community relative to the maximum possible number of edges for that community.
+        """
+Purpose
+High Internal Edge Density:
+
+Indicates that nodes in communities are densely connected.
+Desired for cohesive and well-defined communities.
+Low Internal Edge Density:
+
+Suggests sparsely connected communities.
+Could indicate fragmented or poorly formed clusters.
+        
+        Comparison with Other Metrics
+Internal Edge Density focuses on the internal connectivity of nodes within a single community.
+Metrics like conductance or modularity consider both internal connectivity and external connectivity (connections to nodes outside the community).
+        """
         internal_evaluation_scores['internal_edge_density'] = pred_communities.internal_edge_density().score
+        """
+        This calculates the fraction of nodes in the detected communities that have a degree higher than the median degree of their community 
+        This metric helps evaluate the connectivity distribution within communities.
+It can highlight imbalances where a few highly connected nodes dominate the structure of a community.
+        """
         internal_evaluation_scores['fraction_over_median_degree'] = pred_communities.fraction_over_median_degree().score # it drops warning
         # internal_evaluation_scores['avg_embeddedness'] = pred_communities.avg_embeddedness().score # it takes ages to compute
         # internal_evaluation_scores['modularity_overlap'] = pred_communities.modularity_overlap().score # it takes ages to compute
 
+        #Used to quantitatively compare the predicted and ground truth communities.
+        #A higher ONMI value indicates better alignment between the model’s predictions and the expected community structure.
         if 'groundtruth_communities' in dataset:
+            #evaluation from import cdlib
             internal_evaluation_scores['onmi'] = evaluation.overlapping_normalized_mutual_information_MGH( dataset['groundtruth_communities'], pred_communities ).score
                 
     return internal_evaluation_scores, pred_communities, original_communities
