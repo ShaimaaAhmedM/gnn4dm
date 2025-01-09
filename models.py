@@ -207,7 +207,7 @@ class GNN(torch.nn.Module):
     #Biological Insight:Even genes not explicitly in the pathway might have indirect effects or associations due to their graph connections.
     #The y_preds structure allows a detailed analysis of how all graph genes contribute to specific pathways, not just the genes explicitly in the pathway.
     def forward(self, x, edge_index):
-        #Iterate Over GNN hidden Layers seld.convs
+        #Iterate Over GNN hidden Layers self.convs
         for i in range(len(self.convs)):
             if self.dropout != 0:
                 x = F.dropout(x, p=self.dropout, training=self.training)
@@ -413,7 +413,11 @@ class GAEL(torch.nn.Module):
     #example_function(1, 2, 3, name="Alice", age=25)
     #encode takes input data (typically node features and/or graph structure) and passes it through the encoder, which computes node embeddings.
     def encode(self, *args, **kwargs):
-        r"""Runs the encoder and computes node-wise latent variables."""
+        r"""Runs the encoder and computes node-wise latent variables.
+        Since self.encoder is a torch.nn.Module, it is callable.
+        The __call__ method of torch.nn.Module is invoked.
+        This method internally calls self.encoder.forward(*args, **kwargs).
+        """
         return self.encoder(*args, **kwargs)
     #decode then takes these embeddings and passes them through the decoder, which reconstructs the graph structure, often in the form of edge probabilities.
     def decode(self, *args, **kwargs):
