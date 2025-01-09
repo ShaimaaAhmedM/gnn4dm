@@ -61,7 +61,17 @@ def getPredictecCommunities2(F : torch.Tensor, G : nx.Graph, threshold = 0.1, no
     comms = [x for x in comms if x != []]
 
     return NodeClustering( communities=comms, graph=G, overlap=True )
-
+#The function assigns nodes to communities based on their latent embeddings (F). 
+#It can perform two types of community assignments: Nodes can belong to multiple communities if their embedding values exceed the threshold.
+#or Nodes are assigned to the single community with the highest embedding value (non-overlapping).
+#The dimensionality of the latent space, often corresponding to the number of communities.
+#A community is a subset of nodes in the graph that are more likely to be linked with each other than with nodes outside the subset.
+#In gene-to-gene networks, communities may represent groups of genes working together in biological processes or pathways.
+#Communities are inferred directly from the latent embeddings (F), which capture structural relationships in the graph.
+#Each column of F represents a potential community, and values indicate membership strength.
+#Communities do not rely on predefined labels (like pathways) but are data-driven.
+#The value of a specific cell, F[i, j], indicates how strongly Node i belongs to Community j. 
+#This is often referred to as the membership strength of the node in that community.
 def getPredictecCommunities3(F : torch.Tensor, G : nx.Graph, threshold = 0.1, normalize = True):
     # normalize if needed
     H = FN.normalize( F, p=1, dim=1 ) if normalize else F
@@ -71,22 +81,45 @@ def getPredictecCommunities3(F : torch.Tensor, G : nx.Graph, threshold = 0.1, no
     
     # if we have to cut by a threshold
     if threshold != None:
+        #The operation H >= threshold is applied element-wise
+        #Produces a boolean tensor where:True if the element in H is greater than or equal to threshold.False otherwise.
+        #.numpy() Converts the PyTorch tensor into a NumPy array.
+        #NumPy arrays are more efficient for non-GPU computations and are widely supported in Python libraries hence .cpu()
+        #.float() Converts the boolean tensor into a floating-point tensor. T 1.0 F 0.0
         H_filtered = (H >= threshold).float().cpu().detach().numpy()
-        
+
+        #np.nonzero(H_filtered) identifies the row and column indices of all non-zero elements in H_filtered
+        #row and col are two seperate arrays representing Indices of the columns corresponding to the non-zero elements.
         row,col = np.nonzero(H_filtered)
+
+        #The loop appends nodes to communities without enforcing exclusivity.comms = [[0], [0, 1, 2]...] so comunity 0 has node 0 only community 1 has nodes 0,1,2 and so on
+        """
+        better for me to understand i think if we remove r 
+        for i,_ in enumerate(row):
+            comms[col[i]].append(row[i])
+        """
         for i,r in enumerate(row):
             comms[col[i]].append(r)
+            
     else: # if the row-wise max is needed (i.e. non-overlapping clustering)
         # get indices
+        #max Computes the maximum value along dimension 1 (row-wise) for the matrix H
+        #max returns the max values in array values and their indices in array indices
+        #_ is used to ignore the first return value (values in this case), since it’s not needed for the current logic.
         _, indices = torch.max(H, dim=1)
-        
+
+        #assigns nodes to their corresponding communities shape[1] means iterate over columns
+        # first indices == i returns a tensor of t and f let's say if i is zero find which nodes belong to community 0
+        #torch.nonzero [f,t,t] results in ([[1],[2]]) as index 0 is false so nodes 1 and 2 belong to community 0
+        #.flatten() transforms [[1],[2]] to [1,2]
+        #list converts numpy array into list
         for i in range(H.shape[1]):
             comms[i] = list(torch.nonzero( indices == i ).cpu().detach().numpy().flatten())
 
     # filter out empty communities while creating NodeClustering
     # return the original clusters as well as a list, as cdlib sorts the communities by length
     # and we loose the mapping between the weights and the modules
-
+    #NodeClustering Contains non-empty communities mapped to the graph.Directly usable by tools like the CDlib library
     return NodeClustering( communities=[x for x in comms if x != []], graph=G, overlap=True ), comms
 
 def inv_softplus(bias: float | torch.Tensor) -> float | torch.Tensor:
