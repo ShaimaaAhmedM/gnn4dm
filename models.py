@@ -91,6 +91,7 @@ class GNN(torch.nn.Module):
     #in_channels in GNN refers to the raw input features at the start of the model.
     #The hidden_channels_before_module_representation parameter refers to the sizes of the intermediate layers (hidden layers) in the Graph Neural Network (GNN) before it produces the final output, which is called the module representation.
     #if hidden_channels_before_module_representation is a single number like 128, it means there is only one hidden layer before the module representation layer, this hidden layer had 128 features.
+    #if hidden_channels_before_module_representation is a list like [128,64], then there are two hidden layers
     #this simplifies the architecure to input->hidden layer-> module representation
     #if batchnorm=True, adds a BatchNorm1d layer after the hidden layer.
     #module_representation_channels: Size of the final GNN output (number of features per node in the module representation).
@@ -216,6 +217,14 @@ class GNN(torch.nn.Module):
             else:
                 #For graph-based layers (e.g., GCNConv), the graph structure (edge_index) is used.
                 x = self.convs[i](x, edge_index) 
+            """
+            ReLU (Rectified Linear Unit) is a widely used activation function in neural networks. 
+            It introduces non-linearity into the model, which allows it to learn complex patterns. 
+            The mathematical definition of the ReLU function is:ReLU(x)=max(0,x)
+            ReLU is applied element-wise to the output of a layer. For example, in a feedforward layer:
+            output=ReLU(z)
+            F Stands for torch.nn.functional
+            """
             x = F.relu(x)
             if i < len(self.batchnorms_convs):
                 x = self.batchnorms_convs[i](x)
@@ -239,6 +248,11 @@ class GNN(torch.nn.Module):
         # where k is a learnable scaling parameter
         # tanh(k*x) > 0.5 <=> x > 0.549306/k
         #Ensures the outputs are in a range interpretable as probabilities (e.g., 0 to 1).
+        #Softplus: Smooth and differentiable approximation of ReLU for non-negative outputs.
+        #Tanh: Symmetric activation function suitable for balanced, zero-centered outputs.
+        #ex x = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0])
+        # softplus_output: [0.1269, 0.3133, 0.6931, 1.3133, 2.1269]
+        # tanh_output: [-0.9640, -0.7616, 0.0000, 0.7616, 0.9640]
         if self.transform_probability_method == 'tanh':
             x = torch.tanh( F.softplus(self.threshold) * x )
         else:
